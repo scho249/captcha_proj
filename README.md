@@ -1,6 +1,6 @@
 # CAPTCHA behavioral user segmentation
 
-** - Cho, Hiura, Kweon, Yu, Zailaa - **
+**Cho, Hiura, Kweon, Yu, Zailaa**
 
 ## Project summary
 
