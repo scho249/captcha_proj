@@ -1,0 +1,41 @@
+/* =============================================================================
+   shared.css — CaptchaCapture Design System
+   Single source of truth for all visual styles.
+   ============================================================================= */
+
+/* =============================================================================
+   6. TYPOGRAPHY — SVG data-vis & UI text //////// DIG INTO THIS BEFORE REMOVING
+   ============================================================================= */
+
+/* Filter list labels (D3 SVG text) 
+.filters-text {
+  font-size: 12px;
+  fill: #A8A8A8;
+  font-weight: 400;
+  font-family: var(--font-ui);
+  letter-spacing: 0.2px;
+  transition: fill 120ms ease, opacity 120ms ease;
+}
+
+.filters-text.hovered { fill: #DCDCDC; }
+
+.filters-text.selected {
+  fill: #FFFFFF;
+  font-weight: 600;
+}
+
+/* SVG axis labels 
+.axis-label {
+  font-family: var(--font-ui);
+  fill: #bbb;
+  font-size: 16px;
+}
+
+/* Radar legend line label 
+.radar-legend-highlighted-line {
+  font-size: 12px;
+  paint-order: stroke;
+  stroke: #BFBFBF;
+  stroke-width: 6px;
+  stroke-linejoin: round;
+} */

@@ -1,0 +1,446 @@
+/* =============================================================================
+   viz.css — Data Visualization Styles
+   ============================================================================= */
+
+
+/* =============================================================================
+   1. GLOBAL SVG DEFAULTS
+   ============================================================================= */
+
+svg text {
+  font-family: var(--font-ui);
+  fill: var(--text-mid); 
+}
+
+/* Filter list labels (D3 SVG text) */
+.filters-text {
+  font-size: 12px;
+  fill: #A8A8A8;
+  font-weight: 400;
+  font-family: var(--font-ui);
+  letter-spacing: 0.2px;
+  transition: fill var(--transition-fast), opacity var(--transition-fast);
+}
+
+.filters-text.hovered {
+  fill: #DCDCDC;
+  cursor: pointer;
+}
+
+.filters-text.selected {
+  fill: var(--text-hi);
+  font-weight: 600;
+}
+
+/* SVG axis labels */
+.axis-label {
+  font-family: var(--font-ui);
+  fill: #bbb;
+  font-size: 16px;
+}
+
+/* Radar legend line label */
+.radar-legend-highlighted-line {
+  font-size: 12px;
+  paint-order: stroke;
+  stroke: #BFBFBF;
+  stroke-width: 6px;
+  stroke-linejoin: round;
+}
+
+
+/* =============================================================================
+   2. TOOLTIP
+   ============================================================================= */
+
+#tooltip {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.82);
+  color: var(--text-hi);
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  max-width: 260px;
+  transition: opacity 0.15s;
+}
+
+.tooltip-meta {
+  font-size: var(--text-size-xs);
+  opacity: 0.65;
+  margin-bottom: 4px;
+}
+
+.tooltip-cluster {
+  font-weight: 700;
+  font-size: var(--text-size-md);
+  margin-bottom: 6px;
+}
+
+.tooltip-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 10px;
+  row-gap: 2px;
+  font-size: 0.8rem;
+}
+
+.tooltip-dim {
+  opacity: 0.6;
+}
+
+
+/* =============================================================================
+   3. FILTER + LEGEND INTERACTION STATES
+   State classes set by JS: .is-hovered, .is-selected
+   ============================================================================= */
+
+/* Base interactive behavior */
+.filter-item {
+  cursor: pointer;
+}
+
+/* ============================================================================
+   TEXT STATES (shared)
+   ============================================================================ */
+
+.filter-item text {
+  fill: var(--text-lo);
+  transition: fill var(--transition-fast), font-weight var(--transition-fast);
+}
+
+.filter-item.is-hovered text,
+.filter-item.is-selected text {
+  fill: var(--text-hi);
+}
+
+.filter-item.is-selected text {
+  font-weight: 600;
+}
+
+/* ============================================================================
+   SHAPE BASE STYLING (rects + circles unified)
+   ============================================================================ */
+
+.filter-item rect,
+.filter-item circle {
+  stroke: #333;
+  stroke-width: 1;
+  transition: fill var(--transition-fast),
+              stroke var(--transition-fast),
+              stroke-width var(--transition-fast);
+}
+
+/* ============================================================================
+   HOVER STATE
+   ============================================================================ */
+
+.filter-item.is-hovered rect,
+.filter-item.is-hovered circle {
+  stroke: var(--accent-dim);
+}
+
+/* Optional subtle hover fill for circles (filters UI) */
+.filter-item.is-hovered circle {
+  fill: #2a2a2a;
+  stroke-width: 2.5;
+}
+
+/* ============================================================================
+   SELECTED STATE
+   ============================================================================ */
+
+.filter-item.is-selected rect,
+.filter-item.is-selected circle {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+/* Stronger selected fill for filter circles */
+.filter-item.is-selected circle {
+  fill: #0f1116;
+  filter: drop-shadow(0 0 10px var(--accent-dim));
+}
+
+/* ============================================================================
+   ICON SUPPORT (if used in filter items)
+   ============================================================================ */
+
+.filter-item .icon-wrapper {
+  color: var(--text-lo);
+  opacity: 0.65;
+  transition: color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.filter-item.is-hovered .icon-wrapper,
+.filter-item.is-selected .icon-wrapper {
+  opacity: 1;
+}
+
+.filter-item.is-hovered .icon-wrapper {
+  color: var(--text-hi);
+}
+
+.filter-item.is-selected .icon-wrapper {
+  color: var(--accent);
+}
+
+
+/* =============================================================================
+   4. SCATTER / RADAR AXES
+   ============================================================================= */
+
+.axis line,
+.axis path {
+  stroke: var(--text-muted);
+  stroke-opacity: 0.6;
+}
+
+.axis text,
+.axis-label {
+  fill: var(--text-lo);
+  font-size: var(--text-size-xs);
+}
+
+/* Radar grid */
+.radar-grid-ring,
+.radar-grid-spoke,
+.traj-radar-grid {
+  stroke: var(--text-muted);
+  stroke-opacity: 0.5; 
+  stroke-dasharray: 2, 2;
+  fill: none;
+}
+
+/* Radar text labels — merged: identical rules */
+.radar-axis-label,
+.radar-legend-label {
+  font-size: var(--text-size-xs);
+  fill: var(--text-lo);
+}
+
+/* Radar legend swatches */
+.radar-legend-line-swatch {
+  stroke: var(--text-lo);
+  stroke-width: 2;
+}
+
+.radar-legend-diamond-swatch {
+  fill: var(--text-lo);
+  fill-opacity: 0.4;
+  stroke: var(--text-lo);
+  stroke-width: 0.5;
+}
+
+
+/* =============================================================================
+   5. TRAJECTORY
+   ============================================================================= */
+
+/* Overlay canvas + SVG — absolutely positioned inside #trajectory-plot */
+.traj-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+/* Controls row — positional left/top/width set by JS */
+.traj-ctrl {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: all;
+}
+
+/* Play/pause button */
+.traj-play-btn {
+  width: 26px;
+  height: 26px;
+  background: var(--traj-replay-bg);
+  border: 1px solid var(--traj-replay-border);
+  color: var(--text-mid);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.traj-play-btn:hover {
+  color: var(--text-hi);
+  border-color: var(--accent-dim);
+}
+
+/* Scrubber */
+.traj-scrubber {
+  flex: 1;
+  height: 4px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  min-width: 0;
+}
+
+/* Time label */
+.traj-time-label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 52px;
+  text-align: right;
+}
+
+/* Game icon badge */
+.traj-badge {
+  fill: var(--traj-badge-bg);
+  stroke: var(--traj-badge-stroke);
+  stroke-width: 1.5;
+}
+
+/* Replay button */
+.traj-replay-rect {
+  fill: var(--traj-replay-bg);
+  stroke: var(--traj-replay-border);
+  stroke-width: 1;
+  cursor: pointer;
+  pointer-events: all;
+}
+
+/* Text label variants */
+.traj-label-bold {
+  fill: var(--text-mid);
+  font-weight: 600;
+  font-size: var(--text-size-md);
+}
+
+.traj-label-sm {
+  font-size: var(--text-size-xs);
+  fill: var(--text-lo)
+}
+
+/* Mono labels used in stats and cluster name */
+.traj-label-mono,
+.traj-label-mono-bold {
+  font-family: var(--font-mono);
+  font-size: var(--text-size-xs);
+  fill: var(--text-lo);
+}
+
+.traj-label-mono-bold {
+  font-weight: 600;
+  fill: var(--text-lo);
+}
+
+/* Error state */
+.traj-error {
+  padding: 8px;
+  color: #c66;
+}
+
+/* Trajectory legend */
+.traj-legend-line {
+  stroke-linecap: round;
+}
+
+.traj-legend-line.traj-legend-up {
+  stroke: var(--traj-cursor-up);
+}
+
+.traj-legend-line.traj-legend-down {
+  stroke: var(--traj-cursor-down);
+}
+
+.traj-legend-label {
+  font-family: var(--font-ui);
+  fill: var(--text-mid);
+  font-size: var(--text-size-xs);
+}
+
+/* ── Trajectory split layout ──────────────────────────────── */
+
+#trajectory-plot {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.traj-half {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+
+/* =============================================================================
+   6. STATS CARD
+   ============================================================================= */
+
+.stats-card {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  height: 100%;
+}
+
+.stats-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 180px;
+}
+
+/* .stats-cluster-pill shape is defined alongside .cluster-badge in components.css */
+
+.stats-meta {
+  font-size: var(--text-size-xs);
+  color: var(--text-muted);
+  padding-left: 2px;
+}
+
+.stats-metrics {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.stats-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 64px;
+}
+
+.stats-label {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.stats-value {
+  font-size: var(--text-size-lg);
+  font-weight: 700;
+  color: var(--text-mid);
+  line-height: 1;
+}
+
+.stats-unit {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+}

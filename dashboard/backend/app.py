@@ -1,0 +1,414 @@
+from __future__ import annotations
+
+import json
+import logging
+import math
+import os
+import pickle
+import threading
+from pathlib import Path
+
+import numpy as np
+from datasets import concatenate_datasets, load_dataset
+from flask import Flask, jsonify, make_response, request, send_from_directory
+from flask_cors import CORS
+
+logger = logging.getLogger(__name__)
+
+_BACKEND_DIR  = Path(__file__).resolve().parent
+_FRONTEND_DIR = _BACKEND_DIR.parent / "frontend"
+_DEFAULT_DATA = _BACKEND_DIR.parent / "data"
+_HF_REPO      = "Capycap-AI/CaptchaSolve30k"
+_HF_SPLITS    = ("train", "validation", "test")
+_DEFAULT_PORT = 5001
+
+_ds_all   = None
+_ds_lock  = threading.Lock()
+
+_scatter_pts: list[dict] | None = None
+_scatter_lock = threading.Lock()
+
+_model: dict | None = None
+_model_lock = threading.Lock()
+
+EPS = 1e-6
+MAX_SPEED_PS = 800  # px/sample — discard teleport glitches
+# Must match the browser game's fixed timestep (game.html PHYSICS_MS = 1000/240).
+_PHYSICS_MS = 1000.0 / 240.0
+def _strip_idle_ticks(ticks: list) -> list:
+    """Remove consecutive ticks with identical (x, y) — idle physics frames.
+    Training stores position-change events; live browser stores every 240 Hz
+    physics frame. Without this filter, ~80% of live steps are zero-distance,
+    which deflates speed_mean and inflates pause_rate → everything classifies slow.
+    """
+    if not ticks:
+        return ticks
+    out = [ticks[0]]
+    for t in ticks[1:]:
+        prev = out[-1]
+        if t["x"] != prev["x"] or t["y"] != prev["y"]:
+            out.append(t)
+    return out
+
+def _estimate_duration_ms_from_ticks(ticks: list) -> int:
+    """When the client sends duration 0 or omits it, derive ms from tick stream."""
+    if not ticks:
+        return 0
+    try:
+        last_si = max(int(t.get("sampleIndex", 0)) for t in ticks)
+        return int(round(float(last_si + 1) * _PHYSICS_MS))
+    except (TypeError, ValueError):
+        return int(round(float(len(ticks)) * _PHYSICS_MS))
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    v = os.getenv(name)
+    return default if v is None else v.strip().lower() in ("1", "true", "yes", "on")
+
+
+
+def _load_model(data_dir: Path) -> dict | None:
+    global _model
+    if _model is not None:
+        return _model
+    with _model_lock:
+        if _model is not None:
+            return _model
+        fp = data_dir / "model.pkl"
+        if not fp.is_file():
+            return None
+        with open(fp, "rb") as f:
+            _model = pickle.load(f)
+        logger.info("Loaded RF model bundle from %s", fp)
+        return _model
+
+
+def _dedupe(tick_inputs: list) -> list:
+    seen: set[int] = set()
+    unique = []
+    for p in tick_inputs:
+        if hasattr(p, "as_py"):
+            p = p.as_py()
+        idx = int(p["sampleIndex"])
+        if idx not in seen:
+            seen.add(idx)
+            unique.append(p)
+    return unique
+
+
+def _extract_features(tick_inputs: list, duration_ms: int | float) -> dict | None:
+    """Extract the 6 kinematic features from a list of tick dicts."""
+    points = _dedupe(tick_inputs)
+    if len(points) < 3:
+        return None
+    coords = np.array([(p["x"], p["y"]) for p in points], dtype=float)
+    step_d = np.linalg.norm(np.diff(coords, axis=0), axis=1)
+    step_d = step_d[step_d <= MAX_SPEED_PS] if (step_d <= MAX_SPEED_PS).sum() >= 2 else step_d
+    path_length = float(step_d.sum())
+    straight_line = float(np.linalg.norm(coords[-1] - coords[0]))
+    return {
+        "duration":        int(round(float(duration_ms))),
+        "path_length":     path_length,
+        "speed_mean":      float(step_d.mean()),
+        "path_efficiency": straight_line / (path_length + EPS),
+        "pause_rate":      float((step_d < 0.5).mean()),
+        "speed_std":       float(step_d.std()),
+    }
+
+
+def _downsample_ticks(ticks: list, duration_ms: float, target_rate: float) -> list:
+    """Downsample physics ticks to match the training tick rate (~77.7/sec)."""
+    if not ticks:
+        return ticks
+    duration_sec = duration_ms / 1000.0
+    if duration_sec <= 0:
+        return ticks
+    target_n = max(3, int(target_rate * duration_sec))
+    if len(ticks) <= target_n:
+        return ticks
+    indices = np.linspace(0, len(ticks) - 1, target_n, dtype=int)
+    return [ticks[i] for i in indices]
+
+
+
+def _tick_inputs_to_json(tick_inputs) -> list[dict]:
+    if tick_inputs is None:
+        return []
+    out = []
+    for t in tick_inputs:
+        if hasattr(t, "as_py"):
+            t = t.as_py()
+        out.append({
+            "x":           float(t["x"]),
+            "y":           float(t["y"]),
+            "isDown":      bool(t["isDown"]),
+            "sampleIndex": int(t["sampleIndex"]),
+        })
+    return out
+
+
+def _ensure_loaded() -> None:
+    global _ds_all
+    if _ds_all is not None:
+        return
+    with _ds_lock:
+        if _ds_all is not None:
+            return
+        repo   = os.getenv("HF_DATASET_REPO", _HF_REPO)
+        splits = tuple(
+            s.strip()
+            for s in os.getenv("HF_DATASET_SPLITS", ",".join(_HF_SPLITS)).split(",")
+            if s.strip()
+        )
+        token = os.getenv("HF_TOKEN") or None
+        logger.info("Loading %s …", repo)
+        ds_dict = load_dataset(repo, token=token)
+        missing = [s for s in splits if s not in ds_dict]
+        if missing:
+            raise RuntimeError(f"Missing splits {missing}; available: {list(ds_dict.keys())}")
+        _ds_all = concatenate_datasets([ds_dict[s] for s in splits])
+        logger.info("Dataset ready — %d rows", len(_ds_all))
+
+
+def _get_scatter_pts(data_dir: Path) -> list[dict] | None:
+    global _scatter_pts
+    if _scatter_pts is not None:
+        return _scatter_pts
+    with _scatter_lock:
+        if _scatter_pts is not None:
+            return _scatter_pts
+        fp = data_dir / "scatter_points.json"
+        if not fp.is_file():
+            return None
+        with open(fp) as f:
+            _scatter_pts = json.load(f)
+        logger.info("Cached %d scatter points from %s", len(_scatter_pts), fp)
+        return _scatter_pts
+
+
+def _send_json(data_dir: Path, filename: str, missing_msg: str):
+    fp = data_dir / filename
+    if not fp.is_file():
+        return jsonify({"error": missing_msg}), 404
+    return send_from_directory(str(data_dir), filename, mimetype="application/json")
+
+
+# ── RF classify pipeline ──────────────────────────────────────────────────────
+
+def _rf_classify(model: dict, ticks: list, duration_ms: int | float, game_type: str) -> dict:
+    """
+    Full RF inference pipeline:
+      downsample → extract features → z-score → RF predict →
+      PCA coords → anomaly percentile vs training cluster distances.
+
+    Returns a dict compatible with the existing /api/classify JSON shape plus
+    additional RF-specific fields (probabilities, anomaly_pct, pca_coords).
+    """
+    rf              = model["rf"]
+    pca             = model["pca"]
+    km              = model["km"]
+    zscore_params   = model["zscore_params"]
+    cluster_names   = model["cluster_names"]
+    cluster_features = model["cluster_features"]
+    tick_rate       = model["training_tick_rate"]
+
+    if game_type not in zscore_params:
+        raise ValueError(
+            f"Unknown game_type '{game_type}'. "
+            f"Known: {list(zscore_params.keys())}"
+        )
+    ticks = _strip_idle_ticks(ticks)
+    ticks_ds = _downsample_ticks(ticks, duration_ms, tick_rate)
+    feats = _extract_features(ticks, duration_ms)
+    if feats is None:
+        raise ValueError("Too few trajectory points to extract features.")
+
+    gt_params = zscore_params[game_type]
+    z_vals = {
+        col: (feats[col] - mu) / sigma if sigma > 1e-8 else 0.0
+        for col, (mu, sigma) in gt_params.items()
+        if col in feats
+    }
+    x_z = np.array([[z_vals[c] for c in cluster_features]])
+
+    cluster_id = int(rf.predict(x_z)[0])
+    proba      = rf.predict_proba(x_z)[0]
+    prob_dict  = {int(c): float(p) for c, p in zip(rf.classes_, proba)}
+
+    x_pca    = pca.transform(x_z)[0]
+    centroid = km.cluster_centers_[cluster_id]
+    dist_live = float(
+        np.linalg.norm(np.asarray(x_pca[:2], dtype=float) - np.asarray(centroid[:2], dtype=float))
+    )
+
+    all_pts = _scatter_pts or []
+    cluster_pts = [
+        p
+        for p in all_pts
+        if p.get("cluster") == cluster_id
+        and p.get("game_type") == game_type
+        and not p.get("is_outlier", False)
+    ]
+    if cluster_pts:
+        train_dists = np.array([
+            math.sqrt((p["pca_x"] - centroid[0]) ** 2 + (p["pca_y"] - centroid[1]) ** 2)
+            for p in cluster_pts
+        ])
+        anomaly_pct = float((train_dists < dist_live).mean() * 100)
+    else:
+        anomaly_pct = 0.0
+
+    if cluster_pts:
+        cluster_pts_sorted = sorted(
+            cluster_pts,
+            key=lambda p: (p["pca_x"] - x_pca[0]) ** 2 + (p["pca_y"] - x_pca[1]) ** 2,
+        )
+        exemplars = [
+            {"hf_index": p["hf_index"], "pca_x": p["pca_x"], "pca_y": p["pca_y"]}
+            for p in cluster_pts_sorted[:5]
+        ]
+    else:
+        exemplars = []
+
+    return {
+        "classifier":    "rf",
+        "cluster":       cluster_id,
+        "cluster_name":  cluster_names.get(cluster_id, f"Cluster {cluster_id}"),
+        "probabilities": prob_dict,
+        "features_raw":  feats,
+        "features_z":    z_vals,
+        "pca_coords":    x_pca.tolist(),
+        "anomaly_pct":   anomaly_pct,
+        "exemplars":     exemplars,
+    }
+
+
+
+def create_app() -> Flask:
+    data_dir = Path(os.getenv("DASHBOARD_DATA_DIR", str(_DEFAULT_DATA))).resolve()
+
+    app = Flask(
+        __name__,
+        static_folder=str(_FRONTEND_DIR),
+        static_url_path="",
+    )
+    app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-key-change-in-production")
+    CORS(app)
+
+    def _no_cache(html_file: str):
+        resp = make_response(app.send_static_file(html_file))
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+        return resp
+
+    @app.route("/")
+    def index():
+        return _no_cache("game.html")
+
+    @app.route("/dashboard")
+    def dashboard():
+        return _no_cache("index.html")
+
+    @app.route("/health")
+    def health():
+        model = _load_model(data_dir)
+        out: dict = {"status": "ok", "model_ready": model is not None}
+        if model is not None:
+            out["classifier"] = "rf"
+        return jsonify(out)
+
+    @app.route("/api/scatter_points.json")
+    def api_scatter_points():
+        return _send_json(data_dir, "scatter_points.json",
+                          "Run notebook export — missing scatter_points.json")
+
+    @app.route("/api/cluster_meta.json")
+    def api_cluster_meta():
+        return _send_json(data_dir, "cluster_meta.json", "Missing cluster_meta.json")
+
+    @app.route("/api/cluster_profiles.json")
+    def api_cluster_profiles():
+        return _send_json(data_dir, "cluster_profiles.json", "Missing cluster_profiles.json")
+
+    @app.route("/api/classify", methods=["POST"])
+    def classify():
+        body = request.get_json(force=True, silent=True) or {}
+        game_type = body.get("game_type", "")
+        ticks     = body.get("ticks", [])
+        duration  = body.get("duration")
+
+        model = _load_model(data_dir)
+        if model is None:
+            return jsonify({
+                "error": "model_not_found",
+                "detail": "Missing dashboard/data/model.pkl — run notebook Step 10 export.",
+            }), 503
+
+        if not ticks:
+            return jsonify({
+                "error": "bad_request",
+                "detail": "Expected JSON with non-empty 'ticks' and 'game_type'.",
+            }), 400
+
+        try:
+            duration_ms = float(duration) if duration is not None else float("nan")
+        except (TypeError, ValueError):
+            return jsonify({"error": "'duration' must be a number (milliseconds)"}), 400
+
+        if math.isfinite(duration_ms) and duration_ms > 0:
+            duration_ms = int(round(duration_ms))
+        else:
+            duration_ms = _estimate_duration_ms_from_ticks(ticks)
+        if duration_ms <= 0:
+            return jsonify({"error": "cannot_estimate_duration", "detail": "No ticks to infer duration."}), 400
+
+        _get_scatter_pts(data_dir)
+
+        try:
+            result = _rf_classify(model, ticks, duration_ms, game_type)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception:
+            logger.exception("RF classify failed")
+            return jsonify({"error": "classification_failed"}), 500
+
+        return jsonify(result)
+
+    @app.route("/session/<int:hf_index>")
+    def get_session(hf_index: int):
+        try:
+            _ensure_loaded()
+        except Exception as e:
+            logger.exception("Dataset load failed")
+            return jsonify({"error": "dataset_load_failed", "detail": str(e)}), 503
+
+        n = len(_ds_all)
+        if hf_index < 0 or hf_index >= n:
+            return jsonify({"error": "not_found", "hf_index": hf_index, "n_rows": n}), 404
+
+        row = _ds_all[hf_index]
+        raw_dur = row.get("duration")
+        try:
+            dur_out = int(round(float(raw_dur))) if raw_dur is not None else None
+        except (TypeError, ValueError):
+            dur_out = raw_dur
+        return jsonify({
+            "hf_index":    hf_index,
+            "game_type":   row.get("gameType"),
+            "duration":    dur_out,
+            "touchscreen": bool(row.get("touchscreen", False)),
+            "ticks":       _tick_inputs_to_json(row.get("tickInputs")),
+        })
+
+    return app
+
+
+app = create_app()
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    port  = int(os.getenv("PORT", os.getenv("DASHBOARD_PORT", str(_DEFAULT_PORT))))
+    debug = _env_bool("FLASK_DEBUG")
+    logger.info("Starting dashboard at http://0.0.0.0:%d/", port)
+    app.run(host="0.0.0.0", port=port, debug=debug)
