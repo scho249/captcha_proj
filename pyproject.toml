@@ -1,7 +1,7 @@
 [project]
-name = "cse6242-captcha"
+name = "captcha"
 version = "0.1.0"
-description = "CAPTCHA Behavioral Segmentation — CSE 6242 Team 165"
+description = "CAPTCHA Behavioral Segmentation"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

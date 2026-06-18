@@ -1,6 +1,6 @@
-# CSE 6242 — CAPTCHA behavioral segmentation
+# CAPTCHA behavioral user segmentation
 
-**Team 165** — Cho, Hiura, Kweon, Yu, Zailaa — Spring 2026
+** - Cho, Hiura, Kweon, Yu, Zailaa - **
 
 ## Project summary
 
@@ -23,7 +23,7 @@ Using [uv](https://github.com/astral-sh/uv):
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env"   # or restart your shell
 
-cd CSE6242-Captcha
+cd captcha_proj
 uv sync --extra dev
 ```
 
@@ -40,7 +40,7 @@ Without uv, create a virtualenv and `pip install` the packages listed under `[pr
 From the repo root (notebook path is relative to `notebook/`):
 
 ```bash
-uv run python -m ipykernel install --user --name cse6242 --display-name "CSE6242 (Python 3)"
+uv run python -m ipykernel install --user --name captcha --display-name "CAPTCHA (Python 3)"
 uv run jupyter notebook notebook/CaptchaSolve.ipynb
 ```
 
@@ -117,24 +117,14 @@ Response includes `cluster`, `cluster_name`, `probabilities` (per-cluster RF con
 
 **Frontend API base:** `js/config.js` uses `window.DASHBOARD_API_BASE` when set; `js/dashboard_api_base.js` is currently empty, so the UI expects the **same origin** as the Flask server.
 
-## Final course submission (`team165final.zip`)
-
-Canvas expects **team165final.zip** with exactly: **README.txt** (user guide), **DOC/** (`team165report.pdf`, `team165poster.pdf`), **CODE/** (minimal runnable tree). From a full git checkout, build it with:
-
-```bash
-chmod +x scripts/package_team165final.sh
-./scripts/package_team165final.sh
-```
-
-Defaults: report from `./team165report.pdf` in the repo root (else a sibling `CSE6242-Docs` clone); poster from `./team165poster.pdf` or `./CSE6242 Final Poster.pdf` (else `CSE6242-Docs`). Override with `REPORT_SRC=...` and `POSTER_SRC=...` if needed. The script omits from **CODE/** in the zip: `.git`, virtualenvs, `.env`, `figures/`, root PDFs (they go only under **DOC/**), `README.md`, `README.txt` (the user guide exists only at the zip root, not duplicated under **CODE/**), `scripts/` (packaging lives in git only), backup `*_old.*` files, and similar non-runtime files.
 
 ## Folder structure
 
 ```text
-CSE6242-Captcha/
+CAPTCHA_PROJ/
 ├── pyproject.toml          # dependencies + Ruff config
 ├── uv.lock
-├── main.py                 # placeholder CLI (“Hello from cse6242-captcha!”)
+├── main.py                 # placeholder CLI
 ├── notebook/
 │   └── CaptchaSolve.ipynb  # analysis, figures, JSON export
 ├── figures/                # plots written by the notebook (path configured in notebook)
